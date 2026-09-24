@@ -1,0 +1,13 @@
+-- OPTIONAL, MANUAL, IRREVERSIBLE.
+-- Run only after `php database/migrate.php --check` reports zero unmatched
+-- station names AND you have a fresh backup. The application keeps the
+-- legacy text columns in sync until you run this, so there is no urgency.
+-- Rename this file to .sql (keeping the 900_ prefix) and run the migrator,
+-- or paste it into phpMyAdmin.
+
+ALTER TABLE staff   DROP COLUMN police_station_name;
+ALTER TABLE reports DROP COLUMN police_station_name, DROP COLUMN district, DROP COLUMN tehsil, DROP COLUMN complainant;
+ALTER TABLE duties  DROP COLUMN police_station_name;
+ALTER TABLE police_stations DROP COLUMN district, DROP COLUMN tehsil;
+ALTER TABLE leave_requests DROP COLUMN leave_type;
+ALTER TABLE alerts DROP COLUMN is_active, DROP COLUMN legacy_alert_message;

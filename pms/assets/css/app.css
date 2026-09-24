@@ -1,0 +1,103 @@
+/* Police Management System - shared styles (Bootstrap 5.3 on top). */
+:root {
+    --pms-navy: #0b2545;
+    --pms-navy-dark: #071a33;
+    --pms-accent: #c9a227;
+    --pms-bg: #f3f5f9;
+    --pms-sidebar-w: 240px;
+}
+html, body { height: 100%; }
+body.app-page { background: var(--pms-bg); color: #1f2937; }
+body.public-page {
+    background: linear-gradient(160deg, var(--pms-navy) 0%, #14375f 60%, #1f4f7a 100%);
+    min-height: 100vh;
+}
+.bg-navy { background-color: var(--pms-navy) !important; }
+
+/* Layout */
+.app-shell { display: flex; min-height: 100vh; }
+.sidebar {
+    width: var(--pms-sidebar-w);
+    background: var(--pms-navy);
+    color: #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+}
+@media (min-width: 992px) {
+    .sidebar { position: sticky; top: 0; height: 100vh; }
+}
+.sidebar-brand {
+    display: flex; align-items: center; gap: 10px;
+    padding: 16px; border-bottom: 1px solid rgba(255,255,255,.12);
+}
+.sidebar-brand img { border-radius: 8px; background: #fff; padding: 2px; }
+.sidebar-nav { padding: 8px 0; flex: 1 1 auto; overflow-y: auto; }
+.sidebar-nav .nav-link {
+    color: #cbd5e1; padding: 10px 16px; border-left: 3px solid transparent;
+}
+.sidebar-nav .nav-link:hover { color: #fff; background: rgba(255,255,255,.06); }
+.sidebar-nav .nav-link.active { color: #fff; background: rgba(255,255,255,.1); border-left-color: var(--pms-accent); }
+.sidebar-nav .nav-link:focus-visible { outline: 2px solid var(--pms-accent); outline-offset: -2px; }
+.sidebar-user { padding: 14px 16px; border-top: 1px solid rgba(255,255,255,.12); font-size: .9rem; }
+.app-main { flex: 1 1 auto; min-width: 0; padding: 20px 24px 40px; display: flex; flex-direction: column; }
+.page-header {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid #dfe3ea;
+}
+.app-footer { margin-top: auto; padding-top: 24px; }
+@media (max-width: 991.98px) {
+    .app-main { padding: 16px; }
+    .sidebar.offcanvas-lg { width: var(--pms-sidebar-w); }
+}
+
+/* Public (login) pages */
+.public-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+.auth-card { width: 100%; max-width: 420px; border: 0; border-radius: 14px; box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+.auth-card .logo { width: 84px; height: 84px; object-fit: cover; border-radius: 50%; border: 3px solid var(--pms-accent); }
+
+/* Cards, stats */
+.card { border: 0; box-shadow: 0 1px 3px rgba(16,24,40,.08); border-radius: 10px; }
+.stat-card { display: flex; align-items: center; gap: 14px; padding: 16px; }
+.stat-card .stat-icon {
+    width: 46px; height: 46px; border-radius: 10px; display: grid; place-items: center;
+    background: rgba(11,37,69,.08); color: var(--pms-navy); font-size: 1.2rem;
+}
+.stat-card .stat-value { font-size: 1.5rem; font-weight: 700; line-height: 1.1; }
+.stat-card .stat-label { color: #6b7280; font-size: .85rem; }
+
+/* Tables */
+.table-wrap { overflow-x: auto; }
+.table thead th { background: #eef2f7; color: #374151; font-weight: 600; white-space: nowrap; }
+.table td, .table th { vertical-align: middle; }
+.table-actions { white-space: nowrap; }
+.empty-state { text-align: center; padding: 40px 16px; color: #6b7280; }
+.empty-state i { font-size: 2.2rem; margin-bottom: 8px; color: #9ca3af; }
+
+/* Forms */
+.form-label { font-weight: 500; }
+.required::after { content: " *"; color: #dc3545; }
+:focus-visible { outline: 3px solid rgba(201,162,39,.7); outline-offset: 2px; }
+.btn-navy { background: var(--pms-navy); color: #fff; border-color: var(--pms-navy); }
+.btn-navy:hover, .btn-navy:focus { background: var(--pms-navy-dark); color: #fff; }
+
+/* Calendar (duties) */
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-day { min-height: 92px; background: #fff; border: 1px solid #e5e7eb; border-radius: 6px; padding: 4px 6px; font-size: .8rem; }
+.cal-day.other-month { background: #f9fafb; color: #9ca3af; }
+.cal-day .d { font-weight: 600; }
+.cal-item { display: block; background: rgba(11,37,69,.08); border-left: 3px solid var(--pms-navy); border-radius: 3px; padding: 1px 4px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cal-item.cancelled { opacity: .5; text-decoration: line-through; }
+.cal-item.completed { border-left-color: #198754; }
+
+/* Print view */
+@media print {
+    .sidebar, .navbar, .page-header .text-muted, .app-footer, .no-print { display: none !important; }
+    .app-main { padding: 0; }
+    body.app-page { background: #fff; }
+    .card { box-shadow: none; border: 1px solid #ccc; }
+}
+.print-sheet { background: #fff; padding: 28px; max-width: 900px; margin: 0 auto; }
+.print-sheet h2 { font-size: 1.2rem; }
+.print-sheet dl { display: grid; grid-template-columns: 180px 1fr; row-gap: 6px; }
+.print-sheet dt { font-weight: 600; color: #374151; }

@@ -1,2 +1,6 @@
 # Local secrets
 pms/mail_config.php
+pms/config.local.php
+# Local database backups and uploads
+backups/
+storage/

@@ -1,13 +1,10 @@
 <?php
-include('config.php');
-
-if (isset($_GET['district'])) {
-    $district = $_GET['district'];
-    $query = "SELECT DISTINCT tehsil FROM reports WHERE district = '$district'";
-    $result = mysqli_query($conn, $query);
-
-    while ($row = mysqli_fetch_assoc($result)) {
-        echo "<option value='" . htmlspecialchars($row['tehsil']) . "'>" . htmlspecialchars($row['tehsil']) . "</option>";
-    }
-}
-?>
+/** AJAX: tehsils of a district (JSON). Requires a login like every other endpoint. */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_login();
+$district = get_int('district_id', 0) ?? 0;
+$rows = $district > 0
+    ? db_all('SELECT id, name FROM tehsils WHERE district_id = ? AND is_active = 1 ORDER BY name', 'i', [$district])
+    : [];
+json_response(['ok' => true, 'tehsils' => $rows]);

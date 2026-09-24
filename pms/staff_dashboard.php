@@ -1,271 +1,92 @@
 <?php
-include('config.php'); // Include database connection
+/** Staff dashboard: my duties, my leave, station alerts. */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/alerts.php';
+require_once __DIR__ . '/includes/leave.php';
+$me = require_role([ROLE_STAFF, ROLE_STATION, ROLE_ADMIN]);
+$id = (int) $me['id'];
 
-// Get staff name from session or use a default value
-$staff_name = isset($_SESSION['staff_name']) ? $_SESSION['staff_name'] : 'Staff'; 
-
-// Handle alert creation
-$alert_status = '';
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['create_alert'])) {
-    $alert_message = mysqli_real_escape_string($conn, $_POST['alert_message']);
-    $alert_date = date('Y-m-d H:i:s');
-
-    // Insert alert into database
-    $query = "INSERT INTO alerts (message, created_at) VALUES ('$alert_message', '$alert_date')";
-    if (mysqli_query($conn, $query)) {
-        $alert_status = "Alert created successfully! (Created at: $alert_date)";
-    } else {
-        $alert_status = "Failed to create alert.";
-    }
+$nextDuties = db_all('SELECT id, duty_description, start_time, end_time, shift_type, Duty_location, status FROM duties
+                      WHERE staff_id = ? AND status = "scheduled" AND end_time >= NOW() ORDER BY start_time LIMIT 5', 'i', [$id]);
+$myLeave    = db_all('SELECT lr.id, lr.leave_start_date, lr.leave_end_date, lr.requested_days, lr.approved_days, lr.status, lt.name AS type_name
+                      FROM leave_requests lr LEFT JOIN leave_types lt ON lt.id = lr.leave_type_id WHERE lr.staff_id = ? ORDER BY lr.id DESC LIMIT 5', 'i', [$id]);
+$balances = [];
+foreach (leave_types_active() as $t) {
+    [$allow, $used, $rem] = leave_balance($id, $t, (int) date('Y'));
+    $balances[] = ['name' => $t['name'], 'allow' => $allow, 'used' => $used, 'rem' => $rem];
 }
+$stationReports = user_station_id() !== null
+    ? (int) db_value('SELECT COUNT(*) FROM reports WHERE police_station_id = ? AND status IN ("Open","Under Investigation")', 'i', [user_station_id()])
+    : 0;
 
-// Fetch all alerts for display
-$alerts_query = "SELECT * FROM alerts ORDER BY created_at DESC";
-$alerts_result = mysqli_query($conn, $alerts_query);
+$pageTitle = 'My Dashboard';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Staff Dashboard - Police Management</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <style>
-        /* Global Styles */
-        body {
-            margin: 0;
-            font-family: 'Roboto', sans-serif;
-            background-color: #f4f4f4;
-        }
-
-        /* Sidebar Styles */
-        .sidebar {
-            height: 100vh;
-            width: 250px;
-            background-color: #001f3f;
-            color: white;
-            position: fixed;
-            display: flex;
-            flex-direction: column;
-            padding-top: 30px;
-        }
-
-        .sidebar a {
-            color: white;
-            padding: 15px;
-            text-decoration: none;
-            font-size: 22px;
-            display: flex;
-            align-items: center;
-            border-bottom: 1px solid #34495e;
-        }
-
-        .sidebar a:hover {
-            background-color: #34495e;
-        }
-
-        .sidebar i {
-            margin-right: 10px;
-        }
-
-        .sidebar .title {
-            color: white;
-            padding: 30px;
-            font-size: 35px;
-            text-align: center;
-            font-weight: bold;
-        }
-
-        .sidebar hr {
-            border: 1px solid #34495e;
-            margin: 0;
-        }
-
-        /* Dashboard Content */
-        .dashboard-container {
-            margin-left: 250px;
-            padding: 20px;
-            width: calc(100% - 250px);
-        }
-
-        /* Welcome Banner */
-        .welcome-banner {
-            background-color: #001f3f;
-            color: white;
-            padding: 50px 20px;
-            font-size: 30px;
-            font-weight: bold;
-            text-align: center;
-        }
-
-        /* Table Styles */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-
-        table, th, td {
-            border: 1px solid #bdc3c7;
-        }
-
-        th, td {
-            padding: 10px;
-            text-align: left;
-        }
-
-        th {
-            background-color: #2c3e50;
-            color: white;
-        }
-
-        tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
-
-        /* Form and Button Styling */
-        .input-field {
-            width: 100%;
-            padding: 12px;
-            margin: 10px 0;
-            border: 1px solid #ccc;
-            border-radius: 8px;
-            font-size: 16px;
-            box-sizing: border-box;
-        }
-
-        .submit-button {
-            width: 100%;
-            padding: 12px;
-            background-color: #001f3f;
-            color: white;
-            border: none;
-            border-radius: 8px;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background-color 0.3s ease;
-        }
-
-        .submit-button:hover {
-            background-color: #004080;
-        }
-
-        /* Alerts Section */
-        .alert-box {
-            margin: 20px 0;
-            padding: 15px;
-            border-radius: 8px;
-            font-size: 16px;
-            background-color: yellow;
-            color: black;
-            border: 1px solid #f1c40f;
-        }
-
-        /* Form Styling */
-        .create-alert-form {
-            margin-top: 20px;
-            background-color: #ffffff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-            color: #333;
-        }
-
-        .create-alert-form textarea {
-            width: 100%;
-            padding: 10px;
-            font-size: 1rem;
-            margin-bottom: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-        }
-
-        .create-alert-form button {
-            background-color: #001f3f;
-            color: #ffffff;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-
-        .create-alert-form button:hover {
-            background-color: #003366;
-        }
-    </style>
-</head>
-<body>
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <div class="title">PMS</div>
-        <hr>
-        <a href="generate_report.php"><i class="fas fa-file-alt"></i>Generate Report</a>
-        <a href="view_reports.php"><i class="fas fa-folder-open"></i>View Reports</a>
-        <a href="leave_request.php"><i class="fas fa-calendar-day"></i>Apply for Leave</a>
-        <a href="leave_status.php"><i class="fas fa-check-circle"></i>Leave Status</a>
-        <a href="view_staff_duty.php?staff_id=1"><i class="fas fa-tasks"></i> View Duty</a>
-        <a href="logout.php"><i class="fas fa-sign-out-alt"></i>Logout</a>
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url('view_staff_duty.php')) ?>">
+            <div class="stat-icon"><i class="fa-solid fa-clipboard-list"></i></div>
+            <div><div class="stat-value"><?= count($nextDuties) ?></div><div class="stat-label">Upcoming duties</div></div>
+        </a>
     </div>
-
-    <!-- Welcome Banner -->
-    <div class="welcome-banner">
-        Welcome to Staff Dashboard
+    <div class="col-6 col-md-3">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url('leave_status.php')) ?>">
+            <div class="stat-icon"><i class="fa-solid fa-calendar-check"></i></div>
+            <div><div class="stat-value"><?= count(array_filter($myLeave, fn($l) => $l['status'] === 'pending')) ?></div><div class="stat-label">Pending leave</div></div>
+        </a>
     </div>
-
-    <!-- Dashboard Content -->
-    <div class="dashboard-container">
-        <!-- Alert Box -->
-        <?php if ($alert_status): ?>
-            <div class="alert-box">
-                <?php echo $alert_status; ?>
-            </div>
-        <?php endif; ?>
-
-        <!-- Create Alert Form -->
-        <h2>Create New Alert</h2>
-        <form action="staff_dashboard.php" method="POST" class="create-alert-form">
-            <textarea name="alert_message" placeholder="Enter your alert message here..." required></textarea>
-            <button type="submit" name="create_alert">Create Alert</button>
-        </form>
-
-        <!-- View Alerts -->
-        <h2>View Alerts</h2>
-        <table>
-    <thead>
-        <tr>
-            <th>ID</th>
-            <th>Alert Message</th>
-            <th>Created At</th>
-        </tr>
-    </thead>
-    <tbody>
-        <?php if (mysqli_num_rows($alerts_result) > 0): ?>
-            <?php while ($alert = mysqli_fetch_assoc($alerts_result)): ?>
-                <?php 
-                    // Get the current time and the alert's creation time
-                    $current_time = new DateTime();
-                    $created_at = new DateTime($alert['created_at']);
-                    
-                    // Calculate the time difference
-                    $interval = $current_time->diff($created_at);
-                    
-                    // Check if the alert is older than 24 hours
-                    if ($interval->days < 1): // Less than 24 hours
-                ?>
-                    <tr>
-                        <td><?php echo $alert['id']; ?></td>
-                        <td><?php echo htmlspecialchars($alert['message']); ?></td>
-                        <td><?php echo $alert['created_at']; ?></td>
-                    </tr>
-                <?php endif; ?>
-            <?php endwhile; ?>
-        <?php else: ?>
-            <tr><td colspan="3">No alerts found.</td></tr>
-        <?php endif; ?>
-    </tbody>
-</table>
-
+    <div class="col-6 col-md-3">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url('view_reports.php')) ?>">
+            <div class="stat-icon"><i class="fa-solid fa-file-lines"></i></div>
+            <div><div class="stat-value"><?= $stationReports ?></div><div class="stat-label">Open station cases</div></div>
+        </a>
     </div>
-</body>
-</html>
+    <div class="col-6 col-md-3">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url('generate_report.php')) ?>">
+            <div class="stat-icon"><i class="fa-solid fa-file-circle-plus"></i></div>
+            <div><div class="stat-value">+</div><div class="stat-label">File a report</div></div>
+        </a>
+    </div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-4"><?= alerts_panel_html() ?></div>
+    <div class="col-lg-4">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3">Next duties</h2>
+            <?php if (!$nextDuties): ?><div class="empty-state py-3"><i class="fa-regular fa-calendar"></i><div>No duties scheduled.</div></div>
+            <?php else: ?>
+            <ul class="list-group list-group-flush">
+                <?php foreach ($nextDuties as $d): ?>
+                <li class="list-group-item px-0">
+                    <div class="fw-semibold"><?= e($d['duty_description']) ?></div>
+                    <div class="small text-muted"><?= fmt_datetime($d['start_time']) ?> → <?= fmt_datetime($d['end_time']) ?> · <?= e(ucfirst($d['shift_type'] ?? '')) ?> · <?= e($d['Duty_location']) ?></div>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+            <?php endif; ?>
+        </div></div>
+    </div>
+    <div class="col-lg-4">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3">Leave balance <?= date('Y') ?></h2>
+            <table class="table table-sm mb-3">
+                <thead><tr><th>Type</th><th class="text-end">Used</th><th class="text-end">Left</th></tr></thead>
+                <tbody><?php foreach ($balances as $b): ?>
+                    <tr><td><?= e($b['name']) ?></td><td class="text-end"><?= (int) $b['used'] ?></td><td class="text-end"><?= $b['rem'] === null ? 'No limit' : (int) $b['rem'] ?></td></tr>
+                <?php endforeach; ?></tbody>
+            </table>
+            <h3 class="h6 text-muted">Recent requests</h3>
+            <?php if (!$myLeave): ?><div class="text-muted small">No leave requests yet.</div>
+            <?php else: ?>
+            <ul class="list-unstyled small mb-0">
+                <?php foreach ($myLeave as $l): ?>
+                <li class="d-flex justify-content-between py-1 border-bottom"><span><?= e($l['type_name'] ?? '') ?> · <?= fmt_date($l['leave_start_date']) ?> – <?= fmt_date($l['leave_end_date']) ?></span><?= status_badge($l['status']) ?></li>
+                <?php endforeach; ?>
+            </ul>
+            <?php endif; ?>
+        </div></div>
+    </div>
+</div>
+<?php require PMS_ROOT . '/includes/layout_bottom.php'; ?>
