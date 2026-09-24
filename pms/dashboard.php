@@ -1,244 +1,140 @@
 <?php
-session_start();
-include('config.php'); // Include your database connection file
+/** Head office admin dashboard (URL kept from the original project). */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/alerts.php';
+$me = require_role([ROLE_ADMIN]);
 
-// Check if the user is logged in
-if (!isset($_SESSION['username'])) {
-    header("Location: index.php");  // Redirect to login if user is not logged in
-    exit();
+$stats = [
+    'reports'   => (int) db_value('SELECT COUNT(*) FROM reports WHERE status <> "Archived"'),
+    'open'      => (int) db_value('SELECT COUNT(*) FROM reports WHERE status IN ("Open","Under Investigation")'),
+    'stations'  => (int) db_value('SELECT COUNT(*) FROM police_stations WHERE is_active = 1'),
+    'staff'     => (int) db_value('SELECT COUNT(*) FROM staff WHERE is_active = 1'),
+    'leave'     => (int) db_value('SELECT COUNT(*) FROM leave_requests WHERE status = "pending"'),
+    'duties'    => (int) db_value('SELECT COUNT(*) FROM duties WHERE status = "scheduled" AND DATE(start_time) = CURDATE()'),
+];
+
+$byMonth  = db_all('SELECT DATE_FORMAT(COALESCE(report_date, created_at), "%Y-%m") ym, COUNT(*) c FROM reports
+                    WHERE COALESCE(report_date, created_at) >= DATE_SUB(CURDATE(), INTERVAL 11 MONTH) GROUP BY ym ORDER BY ym');
+$byStatus = db_all('SELECT status, COUNT(*) c FROM reports GROUP BY status ORDER BY c DESC');
+$byCrime  = db_all('SELECT COALESCE(NULLIF(crime_type, ""), "Unclassified") k, COUNT(*) c FROM reports WHERE status <> "Archived" GROUP BY k ORDER BY c DESC LIMIT 8');
+$byDist   = db_all('SELECT COALESCE(d.name, NULLIF(r.district, ""), "Unknown") k, COUNT(*) c FROM reports r LEFT JOIN districts d ON d.id = r.district_id WHERE r.status <> "Archived" GROUP BY k ORDER BY c DESC LIMIT 8');
+$recent   = db_all('SELECT r.id, r.reference_no, r.crime_type, r.status, r.report_date, ps.police_station_name AS station_name, r.police_station_name
+                    FROM reports r LEFT JOIN police_stations ps ON ps.id = r.police_station_id ORDER BY r.id DESC LIMIT 8');
+
+$months = [];
+for ($i = 11; $i >= 0; $i--) {
+    $months[date('Y-m', strtotime("-$i month", strtotime(date('Y-m-01'))))] = 0;
 }
-
-$role = $_SESSION['role']; // Get user role (admin or staff)
-$username = $_SESSION['username']; // Get logged-in username
-
-// Check for any active alerts
-$alerts_query = "SELECT * FROM alerts WHERE is_active = 1 AND created_at >= (NOW() - INTERVAL 3 HOUR) ORDER BY created_at DESC";
-$alerts_result = $conn->query($alerts_query);
-
-// Check for query errors
-if ($alerts_result === false) {
-    // If the query fails, display an error message
-    die("Error executing query: " . $conn->error);
-}
-
-// Handle the form submission for creating an alert
-if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['alert_message'])) {
-    $alert_message = htmlspecialchars($_POST['alert_message']);
-    $created_at = date('Y-m-d H:i:s');
-    
-    // Insert the new alert into the database
-    $insert_query = "INSERT INTO alerts (message, created_at, is_active) VALUES ('$alert_message', '$created_at', 1)";
-    if ($conn->query($insert_query) === TRUE) {
-        $alert_success = "Alert created successfully!";
-    } else {
-        $alert_error = "Error creating alert: " . $conn->error;
+foreach ($byMonth as $m) {
+    if (isset($months[$m['ym']])) {
+        $months[$m['ym']] = (int) $m['c'];
     }
 }
+$chartData = [
+    'months' => ['labels' => array_map(fn($k) => date('M y', strtotime($k . '-01')), array_keys($months)), 'values' => array_values($months)],
+    'status' => ['labels' => array_column($byStatus, 'status'), 'values' => array_map('intval', array_column($byStatus, 'c'))],
+    'crime'  => ['labels' => array_column($byCrime, 'k'), 'values' => array_map('intval', array_column($byCrime, 'c'))],
+    'district' => ['labels' => array_column($byDist, 'k'), 'values' => array_map('intval', array_column($byDist, 'c'))],
+];
 
+$pageTitle = 'Head Office Dashboard';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard - Police Management</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <style>
-        /* General styles */
-        body {
-            font-family: 'Arial', sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #f5f5f5;
-            color: #1A237E;
-        }
-
-        /* Sidebar styles */
-        .sidebar {
-            width: 200px;
-            background-color: #001f3f; /* Navy Blue */
-            height: 100vh;
-            position: fixed;
-            top: 0;
-            left: 0;
-            display: flex;
-            flex-direction: column;
-            box-shadow: 2px 0px 10px rgba(0, 0, 0, 0.1);
-            color: white;
-        }
-
-        .sidebar .pms-heading {
-            text-align: center;
-            font-size: 1.8rem;
-            font-weight: bold;
-            padding: 20px 0;
-            background-color: #001f3f; /* Navy Blue */
-            margin: 0;
-            border-bottom: 2px solid #34495e;
-        }
-
-        .sidebar a {
-            color: white;
-            text-decoration: none;
-            padding: 15px 20px;
-            margin: 5px 0;
-            display: flex;
-            align-items: center;
-            font-size: 1rem;
-            transition: background 0.3s, padding-left 0.3s;
-        }
-
-        .sidebar a i {
-            margin-right: 10px;
-        }
-
-        .sidebar a:hover {
-            background-color: #001f3f; /* Navy Blue */
-            padding-left: 25px;
-        }
-
-        /* Main content styles */
-        .dashboard-container {
-            margin-left: 220px;
-            padding: 20px;
-            padding-top: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            height: 100vh;
-            position: relative;
-        }
-
-        .welcome-banner {
-            background-color: #001f3f; /* Navy Blue */
-            color: white;
-            text-align: center;
-            font-size: 2rem;
-            font-weight: bold;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            position: absolute;
-            top: 20px; /* Adjust this value to control the vertical positioning */
-            left: 50%;
-            transform: translateX(-50%);
-            width: calc(100% - 40px); /* Adds some responsiveness */
-            max-width: 800px;
-        }
-
-        /* Alerts Section */
-        .alerts-container {
-            margin-top: 150px; /* Added margin to give space from the banner */
-            background-color: #fff; 
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-            width: calc(100% - 40px); /* Increased width of alerts */
-            max-width: 900px;
-        }
-
-        .alert {
-            background-color: #ffeb3b; /* Yellow */
-            color: #333;
-            padding: 15px;
-            margin: 10px 0;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            font-size: 1.1rem;
-        }
-
-        /* Create Alert Form */
-        .create-alert-form {
-            margin-top: 20px;
-            background-color: #ffffff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-            color: #333;
-            width: 100%;
-            max-width: 900px;
-        }
-
-        .create-alert-form textarea {
-            width: 100%;
-            padding: 10px;
-            font-size: 1rem;
-            margin-bottom: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            resize: vertical;
-        }
-
-        .create-alert-form button {
-            background-color: #001f3f;
-            color: #ffffff;
-            padding: 12px 25px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-            font-size: 1rem;
-            transition: background-color 0.3s;
-        }
-
-        .create-alert-form button:hover {
-            background-color: #003366;
-        }
-    </style>
-</head>
-<body>
-
-    <!-- Sidebar -->
-    <div class="sidebar">
-        <!-- PMS Heading -->
-        <div class="pms-heading">PMS</div>
-
-        <!-- Sidebar links -->
-        <?php if ($role == 'admin') { ?>
-            <a href="add_staff.php"><i class="fas fa-user-plus"></i>Add Staff</a>
-            <a href="add_police_station.php"><i class="fas fa-building"></i>Add Police Station</a>
-            <a href="view_staff.php"><i class="fas fa-users"></i>View Staff</a>
-            <a href="view_policestation.php"><i class="fas fa-map-marker-alt"></i>View Police Station</a>
-            <a href="search_criminal.php" class="view-criminal-link"><i class="fas fa-search"></i>View Criminal</a>
-            <a href="report_analysis.php"><i class="fas fa-chart-bar"></i>Report Analysis</a>
-            <a href="logout.php"><i class="fas fa-sign-out-alt"></i>Logout</a>
-        <?php } elseif ($role == 'staff') { ?>
-            <a href="view_reports.php"><i class="fas fa-folder-open"></i>View Reports</a>
-        <?php } ?>
+<div class="row g-3 mb-4">
+    <?php foreach ([
+        ['Reports', $stats['reports'], 'fa-file-lines', 'manage_reports.php'],
+        ['Open cases', $stats['open'], 'fa-folder-open', 'manage_reports.php?status=Open'],
+        ['Stations', $stats['stations'], 'fa-building-shield', 'view_policestation.php'],
+        ['Active staff', $stats['staff'], 'fa-users', 'view_staff.php'],
+        ['Pending leave', $stats['leave'], 'fa-calendar-check', 'admin_leave_requests.php'],
+        ['Duties today', $stats['duties'], 'fa-clipboard-list', 'view_duties.php'],
+    ] as [$label, $value, $icon, $href]): ?>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url($href)) ?>">
+            <div class="stat-icon"><i class="fa-solid <?= e($icon) ?>"></i></div>
+            <div><div class="stat-value"><?= (int) $value ?></div><div class="stat-label"><?= e($label) ?></div></div>
+        </a>
     </div>
+    <?php endforeach; ?>
+</div>
 
-    <!-- Main Content -->
-    <div class="dashboard-container">
-        <div class="welcome-banner">
-            Welcome to the Police Management System, <?php echo htmlspecialchars($username); ?>!
-        </div>
-
-        <!-- Display Active Alerts -->
-        <div class="alerts-container">
-            <?php while ($alert = $alerts_result->fetch_assoc()) { ?>
-                <div class="alert">
-                    <p><strong>Alert:</strong> <?= htmlspecialchars($alert['message']); ?></p>
-                    <p><small>Created at: <?= $alert['created_at']; ?></small></p>
-                </div>
-            <?php } ?>
-        </div>
-
-        <!-- Alert Creation Form -->
-        <?php if ($role == 'admin') { ?>
-            <div class="create-alert-form">
-                <?php if (isset($alert_success)) { ?>
-                    <p style="color: green;"><?= $alert_success; ?></p>
-                <?php } elseif (isset($alert_error)) { ?>
-                    <p style="color: red;"><?= $alert_error; ?></p>
-                <?php } ?>
-                <form method="POST">
-                    <textarea name="alert_message" placeholder="Enter alert message..." required></textarea>
-                    <br><br>
-                    <button type="submit">Create Alert</button>
-                </form>
-            </div>
-        <?php } ?>
+<div class="row g-4 mb-4">
+    <div class="col-lg-8">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3">Reports per month (last 12 months)</h2>
+            <?php if (array_sum($months) === 0): ?>
+                <div class="empty-state py-3"><i class="fa-regular fa-chart-bar"></i><div>No reports in the last 12 months.</div></div>
+            <?php else: ?>
+                <canvas id="chartMonths" height="110" aria-label="Reports per month" role="img"></canvas>
+            <?php endif; ?>
+        </div></div>
     </div>
+    <div class="col-lg-4">
+        <?= alerts_panel_html() ?>
+    </div>
+</div>
 
-</body>
-</html>
+<div class="row g-4 mb-4">
+    <?php foreach ([['chartStatus', 'By status', $byStatus], ['chartCrime', 'By crime type', $byCrime], ['chartDistrict', 'By district', $byDist]] as [$id, $title, $rows]): ?>
+    <div class="col-md-4">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3"><?= e($title) ?></h2>
+            <?php if (!$rows): ?>
+                <div class="empty-state py-3"><i class="fa-regular fa-chart-bar"></i><div>No data yet.</div></div>
+            <?php else: ?>
+                <canvas id="<?= e($id) ?>" height="200" aria-label="<?= e($title) ?>" role="img"></canvas>
+            <?php endif; ?>
+        </div></div>
+    </div>
+    <?php endforeach; ?>
+</div>
+
+<div class="card"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h2 class="h6 text-uppercase text-muted mb-0">Latest reports</h2>
+        <a class="btn btn-sm btn-outline-primary" href="<?= e(app_url('manage_reports.php')) ?>">All reports</a>
+    </div>
+    <?php if (!$recent): ?>
+        <div class="empty-state"><i class="fa-regular fa-folder-open"></i><div>No reports have been filed yet.</div></div>
+    <?php else: ?>
+    <div class="table-wrap"><table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Reference</th><th>Station</th><th>Crime type</th><th>Date</th><th>Status</th></tr></thead>
+        <tbody>
+        <?php foreach ($recent as $r): ?>
+            <tr>
+                <td><a href="<?= e(app_url('view_report.php?id=' . (int) $r['id'])) ?>"><?= e($r['reference_no']) ?></a></td>
+                <td><?= e($r['station_name'] ?? $r['police_station_name']) ?></td>
+                <td><?= e($r['crime_type'] ?: '—') ?></td>
+                <td><?= fmt_date($r['report_date']) ?></td>
+                <td><?= status_badge($r['status']) ?></td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table></div>
+    <?php endif; ?>
+</div></div>
+
+<?php
+$pageScripts = '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var data = ' . json_for_script($chartData) . ';
+    var palette = ["#0b2545", "#c9a227", "#2a6f97", "#6c757d", "#198754", "#dc3545", "#fd7e14", "#6f42c1"];
+    function bar(id, d, horizontal) {
+        var el = document.getElementById(id); if (!el || !d.labels.length) return;
+        new Chart(el, { type: "bar", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: palette[0] }] },
+            options: { indexAxis: horizontal ? "y" : "x", plugins: { legend: { display: false } }, scales: { x: { ticks: { precision: 0 } }, y: { ticks: { precision: 0 }, beginAtZero: true } } } });
+    }
+    function doughnut(id, d) {
+        var el = document.getElementById(id); if (!el || !d.labels.length) return;
+        new Chart(el, { type: "doughnut", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: palette }] },
+            options: { plugins: { legend: { position: "bottom" } } } });
+    }
+    bar("chartMonths", data.months, false);
+    doughnut("chartStatus", data.status);
+    bar("chartCrime", data.crime, true);
+    bar("chartDistrict", data.district, true);
+})();
+</script>';
+require PMS_ROOT . '/includes/layout_bottom.php';

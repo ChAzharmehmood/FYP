@@ -1,180 +1,99 @@
 <?php
-// Database connection
-$conn = new mysqli('localhost', 'root', '', 'db_pms');
+/** Review leave requests (station admin: own station; head office: all). */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/leave.php';
+$me = require_role([ROLE_STATION, ROLE_ADMIN]);
 
-// Check connection
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
-
-// Start session
-session_start();
-
-// Check if the user is logged in and if they are an admin station
-if (!isset($_SESSION['staff_id']) || $_SESSION['role'] != 'admin station') {
-    // Redirect the user to the login page or show an error
-    header('Location: index.php');
-    exit();
-}
-
-// Get the admin's staff_id and police station from the session
-$adminStaffId = $_SESSION['staff_id'];
-$adminPoliceStation = $_SESSION['police_station_name']; // Assuming the session contains the police station name
-
-// Handle leave approval or rejection
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'], $_POST['leave_id'])) {
-    $leaveId = intval($_POST['leave_id']);
-    $action = $_POST['action'];
-
-    if ($action === 'approve' && isset($_POST['approved_days'])) {
-        $approvedDays = intval($_POST['approved_days']);
-        if ($approvedDays < 0) {
-            echo "<script>alert('Approved days cannot be negative.');</script>";
-        } else {
-            // Update the leave request to 'Approved'
-            $updateQuery = "UPDATE leave_requests 
-                            SET status = 'Approved', approved_days = $approvedDays 
-                            WHERE id = $leaveId";
-            if ($conn->query($updateQuery)) {
-                echo "<script>alert('Leave request approved successfully.');</script>";
-            } else {
-                echo "<script>alert('Error updating leave request.');</script>";
-            }
-        }
-    } elseif ($action === 'reject') {
-        // Update the leave request to 'Rejected' and set approved_days to 0
-        $updateQuery = "UPDATE leave_requests 
-                        SET status = 'Rejected', approved_days = 0 
-                        WHERE id = $leaveId";
-        if ($conn->query($updateQuery)) {
-            echo "<script>alert('Leave request rejected successfully.');</script>";
-        } else {
-            echo "<script>alert('Error rejecting leave request.');</script>";
-        }
+if (is_post()) {
+    csrf_verify();
+    $lr = leave_find(post_int('leave_id', 0) ?? 0);
+    if (!$lr || !can_view_leave($lr)) {
+        not_found('Leave request not found.');
     }
+    $err = leave_review($lr, post_str('action', 10), post_int('approved_days'), post_str('reason', 500));
+    flash($err ? 'danger' : 'success', $err ?? 'Leave request ' . post_str('action', 10) . 'd.');
+    redirect('admin_leave_requests.php?' . http_build_query(array_filter(['status' => get_str('status', 10), 'page' => get_int('page')])));
 }
 
-// Fetch leave requests for the admin's police station
-$leaveQuery = "SELECT lr.*, s.name as staff_name, s.police_station_name 
-               FROM leave_requests lr 
-               INNER JOIN staff s ON lr.staff_id = s.id 
-               WHERE s.police_station_name = '$adminPoliceStation'"; // Filter by admin's police station
-$leaveResult = $conn->query($leaveQuery);
-
-// Function to calculate total approved leaves for a staff member
-function getTotalApprovedLeaves($staffId) {
-    global $conn;
-    $totalLeavesQuery = "SELECT SUM(approved_days) AS total_leaves 
-                         FROM leave_requests 
-                         WHERE staff_id = $staffId AND status = 'Approved'";
-    $result = $conn->query($totalLeavesQuery);
-    if ($result && $row = $result->fetch_assoc()) {
-        return $row['total_leaves'] ?? 0; // Return 0 if no approved leaves found
-    }
-    return 0;
+$status = get_str('status', 10) ?: 'pending';
+$staffId = get_int('staff', 0) ?? 0;
+[$scopeSql, $scopeTypes, $scopeParams] = station_scope('s.police_station_id');
+$where = [$scopeSql];
+$types = $scopeTypes;
+$params = $scopeParams;
+if (in_array($status, ['pending', 'approved', 'rejected', 'withdrawn'], true)) {
+    $where[] = 'lr.status = ?';
+    $types .= 's';
+    $params[] = $status;
 }
+if ($staffId) {
+    $where[] = 'lr.staff_id = ?';
+    $types .= 'i';
+    $params[] = $staffId;
+}
+$w = implode(' AND ', $where);
+$base = 'FROM leave_requests lr JOIN staff s ON s.id = lr.staff_id LEFT JOIN leave_types lt ON lt.id = lr.leave_type_id LEFT JOIN police_stations ps ON ps.id = s.police_station_id LEFT JOIN staff rv ON rv.id = lr.reviewed_by';
+$total = (int) db_value("SELECT COUNT(*) $base WHERE $w", $types, $params);
+$pg = paginate($total, 20);
+$rows = db_all("SELECT lr.*, s.name AS staff_name, s.designation, s.police_station_id, ps.police_station_name AS station_name, lt.name AS type_name, lt.annual_allowance, rv.name AS reviewed_by_name
+                $base WHERE $w ORDER BY " . ($status === 'pending' ? 'lr.created_at ASC' : 'lr.reviewed_at DESC, lr.id DESC') . ' LIMIT ? OFFSET ?', $types . 'ii', array_merge($params, [$pg['per_page'], $pg['offset']]));
+if (get_str('export') === 'csv') {
+    audit_log('leave.export', 'leave_request', null, ['rows' => count($rows)]);
+    csv_download('leave_requests.csv', ['#', 'Staff', 'Station', 'Type', 'From', 'To', 'Requested', 'Approved', 'Status', 'Reviewed by', 'Reason'],
+        array_map(fn($r) => [$r['id'], $r['staff_name'], $r['station_name'], $r['type_name'] ?? $r['leave_type'], $r['leave_start_date'], $r['leave_end_date'], $r['requested_days'], $r['approved_days'], $r['status'], $r['reviewed_by_name'], $r['review_reason']], $rows));
+}
+$staffOptions = is_admin() ? db_all('SELECT id, name FROM staff WHERE role <> "admin" ORDER BY name') : db_all('SELECT id, name FROM staff WHERE police_station_id = ? ORDER BY name', 'i', [(int) user_station_id()]);
+
+$pageTitle = 'Leave Requests';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>View Staff Leaves</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background-color: #f8f9fa;
-            color: #343a40;
-        }
-        .navbar {
-            background-color: #007bff;
-            padding: 10px;
-        }
-        .navbar a {
-            color: white;
-            text-decoration: none;
-            font-weight: bold;
-        }
-        .navbar a:hover {
-            text-decoration: underline;
-        }
-        h2 {
-            color: #007bff;
-        }
-        .table {
-            background-color: white;
-            border: 1px solid #dee2e6;
-        }
-    </style>
-</head>
-<body>
-    <!-- Navigation Bar -->
-    <nav class="navbar">
-        <a href="admin_dashboard.php" class="btn btn-home">Home</a>
-    </nav>
-
-    <!-- Main Content -->
-    <div class="container my-4">
-        <h2>Staff Leave Requests</h2>
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>#</th>
-                    <th>Staff Name</th>
-                    <th>Leave Period</th>
-                    <th>Status</th>
-                    <th>Requested Days</th>
-                    <th>Approved Days</th>
-                    
-                    <th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                // Ensure the result is valid before processing
-                if ($leaveResult && $leaveResult->num_rows > 0) {
-                    while ($row = $leaveResult->fetch_assoc()) {
-                        $staffName = $row['staff_name'];
-                        $startDate = $row['leave_start_date'] ?? 'N/A';
-                        $endDate = $row['leave_end_date'] ?? 'N/A';
-                        $requestedDays = (strtotime($endDate) - strtotime($startDate)) / (60 * 60 * 24) + 1;
-                        $approvedDays = $row['approved_days'] ?? 0;
-
-                        echo "<tr>
-                            <td>{$row['id']}</td>
-                            <td>{$staffName}</td>
-                            <td>{$startDate} to {$endDate}</td>
-                            <td>{$row['status']}</td>
-                            <td>{$requestedDays}</td>
-                            <td>{$approvedDays}</td>
-                            
-                            <td>
-                                <form method='POST' style='display: inline-block;'>
-                                    <input type='hidden' name='leave_id' value='{$row['id']}'>
-                                    <input type='hidden' name='action' value='approve'>
-                                    <input type='number' name='approved_days' class='form-control mb-2' placeholder='Days' required>
-                                    <button type='submit' class='btn btn-success btn-sm'>Approve</button>
-                                </form>
-                                <form method='POST' style='display: inline-block;'>
-                                    <input type='hidden' name='leave_id' value='{$row['id']}'>
-                                    <input type='hidden' name='action' value='reject'>
-                                    <button type='submit' class='btn btn-danger btn-sm'
-                                            onclick='return confirm(\"Are you sure you want to reject this leave request?\");'>
-                                        Reject
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>";
-                    }
-                } else {
-                    echo "<tr><td colspan='8' class='text-center'>No leave requests found.</td></tr>";
-                }
-                ?>
-            </tbody>
-        </table>
-    </div>
-
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha3/dist/js/bootstrap.bundle.min.js"></script>
-</body>
-</html>
+<div class="card mb-3"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3"><label for="status" class="form-label">Status</label><select class="form-select" id="status" name="status"><?php foreach (['pending', 'approved', 'rejected', 'withdrawn', 'all'] as $s): ?><option value="<?= $s ?>" <?= $status === $s ? 'selected' : '' ?>><?= ucfirst($s) ?></option><?php endforeach; ?></select></div>
+        <div class="col-md-3"><label for="staff" class="form-label">Staff</label><select class="form-select" id="staff" name="staff"><option value="">All</option><?php foreach ($staffOptions as $s): ?><option value="<?= (int) $s['id'] ?>" <?= $staffId === (int) $s['id'] ? 'selected' : '' ?>><?= e($s['name']) ?></option><?php endforeach; ?></select></div>
+        <div class="col-md-3 d-flex gap-2"><button class="btn btn-navy">Filter</button><a class="btn btn-outline-secondary" href="<?= e(app_url('admin_leave_requests.php')) ?>">Reset</a></div>
+        <div class="col-md-3 text-md-end small"><a href="<?= e(query_link(['export' => 'csv'])) ?>"><i class="fa-solid fa-file-csv"></i> Export CSV</a><?php if (is_admin()): ?> · <a href="<?= e(app_url('leave_types.php')) ?>">Leave types</a><?php endif; ?></div>
+    </form>
+</div></div>
+<div class="card"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2"><span class="text-muted small"><?= $total ?> request(s)</span><?= pagination_html($pg) ?></div>
+    <?php if (!$rows): ?><div class="empty-state"><i class="fa-regular fa-calendar-check"></i><div>No <?= e($status === 'all' ? '' : $status) ?> leave requests.</div></div>
+    <?php else: ?>
+    <div class="table-wrap"><table class="table align-middle">
+        <thead><tr><th>Staff</th><th>Type</th><th>Dates</th><th class="text-end">Days</th><th>Balance</th><th>Reason</th><th>Status</th><th style="min-width:260px"></th></tr></thead>
+        <tbody><?php foreach ($rows as $r):
+            $year = (int) date('Y', strtotime($r['leave_start_date']));
+            $used = $r['leave_type_id'] ? leave_used_days((int) $r['staff_id'], (int) $r['leave_type_id'], $year) : 0;
+            $left = $r['annual_allowance'] === null ? null : max(0, (int) $r['annual_allowance'] - $used);
+        ?>
+            <tr>
+                <td class="fw-semibold"><?= e($r['staff_name']) ?><br><span class="small text-muted"><?= e($r['designation']) ?><?= is_admin() ? ' · ' . e($r['station_name'] ?? '') : '' ?></span></td>
+                <td><?= e($r['type_name'] ?? $r['leave_type']) ?></td>
+                <td class="small text-nowrap"><?= fmt_date($r['leave_start_date']) ?><br>to <?= fmt_date($r['leave_end_date']) ?></td>
+                <td class="text-end"><?= (int) $r['requested_days'] ?><?= $r['status'] === 'approved' ? '<br><span class="small text-success">approved ' . (int) $r['approved_days'] . '</span>' : '' ?></td>
+                <td class="small"><?= $left === null ? 'No limit' : "$left left of " . (int) $r['annual_allowance'] . " in $year" ?></td>
+                <td class="small" style="max-width:220px"><?= e(mb_strimwidth((string) $r['reason'], 0, 140, '…')) ?></td>
+                <td><?= status_badge($r['status']) ?><?= $r['reviewed_by_name'] ? '<br><span class="small text-muted">' . e($r['reviewed_by_name']) . ' · ' . fmt_datetime($r['reviewed_at']) . '</span>' : '' ?><?= $r['review_reason'] ? '<br><em class="small">' . e($r['review_reason']) . '</em>' : '' ?></td>
+                <td>
+                    <?php if ($r['status'] === 'pending' && can_review_leave($r)): ?>
+                    <form method="post" class="d-flex flex-column gap-1">
+                        <?= csrf_field() ?><input type="hidden" name="leave_id" value="<?= (int) $r['id'] ?>">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text">Days</span>
+                            <input type="number" class="form-control" name="approved_days" min="1" max="<?= (int) $r['requested_days'] ?>" value="<?= (int) $r['requested_days'] ?>" aria-label="Approved days">
+                            <button class="btn btn-success" name="action" value="approve">Approve</button>
+                        </div>
+                        <div class="input-group input-group-sm">
+                            <input class="form-control" name="reason" maxlength="500" placeholder="Reason (required to reject)" aria-label="Reason">
+                            <button class="btn btn-outline-danger" name="action" value="reject">Reject</button>
+                        </div>
+                    </form>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?></tbody>
+    </table></div>
+    <?php endif; ?>
+</div></div>
+<?php require PMS_ROOT . '/includes/layout_bottom.php'; ?>

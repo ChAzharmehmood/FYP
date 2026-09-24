@@ -1,225 +1,120 @@
 <?php
-include 'config.php'; 
-session_start();
-
-// Check if the user is logged in
-if (!isset($_SESSION['username'])) {
-    header("Location: index.php");  // Redirect to login if user is not logged in
-    exit();
+/** Station admin dashboard (URL kept from the original project). */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/alerts.php';
+$me  = require_role([ROLE_STATION]);
+$sid = user_station_id();
+if ($sid === null) {
+    flash('warning', 'Your account is not linked to a police station. Ask head office to assign one.');
 }
+$sidv = (int) $sid;
 
-$role = $_SESSION['role']; // Get user role (admin or staff)
-$username = $_SESSION['username']; // Get logged-in username
+$stats = [
+    'reports' => (int) db_value('SELECT COUNT(*) FROM reports WHERE police_station_id = ? AND status <> "Archived"', 'i', [$sidv]),
+    'open'    => (int) db_value('SELECT COUNT(*) FROM reports WHERE police_station_id = ? AND status IN ("Open","Under Investigation")', 'i', [$sidv]),
+    'staff'   => (int) db_value('SELECT COUNT(*) FROM staff WHERE police_station_id = ? AND is_active = 1', 'i', [$sidv]),
+    'leave'   => (int) db_value('SELECT COUNT(*) FROM leave_requests lr JOIN staff s ON s.id = lr.staff_id WHERE s.police_station_id = ? AND lr.status = "pending"', 'i', [$sidv]),
+    'duties'  => (int) db_value('SELECT COUNT(*) FROM duties WHERE police_station_id = ? AND status = "scheduled" AND DATE(start_time) = CURDATE()', 'i', [$sidv]),
+    'failed'  => (int) db_value('SELECT COUNT(*) FROM duties WHERE police_station_id = ? AND notify_status = "failed"', 'i', [$sidv]),
+];
+$byStatus = db_all('SELECT status, COUNT(*) c FROM reports WHERE police_station_id = ? GROUP BY status', 'i', [$sidv]);
+$byCrime  = db_all('SELECT COALESCE(NULLIF(crime_type, ""), "Unclassified") k, COUNT(*) c FROM reports WHERE police_station_id = ? AND status <> "Archived" GROUP BY k ORDER BY c DESC LIMIT 8', 'i', [$sidv]);
+$today    = db_all('SELECT d.id, d.duty_description, d.start_time, d.end_time, d.status, s.name FROM duties d JOIN staff s ON s.id = d.staff_id
+                    WHERE d.police_station_id = ? AND d.status = "scheduled" AND d.end_time >= NOW() ORDER BY d.start_time LIMIT 8', 'i', [$sidv]);
+$pendingLeave = db_all('SELECT lr.id, lr.leave_start_date, lr.leave_end_date, lr.requested_days, s.name, lt.name AS type_name
+                        FROM leave_requests lr JOIN staff s ON s.id = lr.staff_id LEFT JOIN leave_types lt ON lt.id = lr.leave_type_id
+                        WHERE s.police_station_id = ? AND lr.status = "pending" ORDER BY lr.created_at LIMIT 8', 'i', [$sidv]);
+$chartData = [
+    'status' => ['labels' => array_column($byStatus, 'status'), 'values' => array_map('intval', array_column($byStatus, 'c'))],
+    'crime'  => ['labels' => array_column($byCrime, 'k'), 'values' => array_map('intval', array_column($byCrime, 'c'))],
+];
 
-// Check for any active alerts
-$alerts_query = "SELECT * FROM alerts WHERE is_active = 1 ORDER BY created_at DESC";
-$alerts_result = $conn->query($alerts_query);
-
-// Check for query errors
-if ($alerts_result === false) {
-    die("Error executing query: " . $conn->error);
-}
-
-// Handle alert creation
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_alert'])) {
-    $alert_message = $_POST['alert_message'];
-
-    if (!empty($alert_message)) {
-        // Insert the new alert into the database
-        $create_alert_query = "INSERT INTO alerts (message, is_active, created_at) VALUES ('$alert_message', 1, NOW())";
-        if ($conn->query($create_alert_query)) {
-            $alert_success = "Alert created successfully!";
-        } else {
-            $alert_error = "Error creating alert: " . $conn->error;
-        }
-    } else {
-        $alert_error = "Alert message cannot be empty!";
-    }
-}
+$pageTitle = 'Station Dashboard';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Police Station Admin Dashboard</title>
-    <style>
-        /* General Styles */
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: Arial, sans-serif;
-            background-color: #f0f4f8;
-            color: #ffffff;
-        }
-
-        /* Dashboard Container */
-        .dashboard {
-            text-align: center;
-            padding: 20px;
-            background-color: #001f3f;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
-        }
-
-        /* Heading */
-        .dashboard h1 {
-            font-size: 2.5rem;
-            color: #ffffff;
-            margin: 0;
-            padding: 20px;
-        }
-
-        /* Menu */
-        .menu {
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            margin-top: 20px;
-        }
-
-        /* Menu Links */
-        .menu a {
-            display: inline-block;
-            text-decoration: none;
-            font-size: 1.2rem;
-            color: #ffffff;
-            background-color: #003366;
-            padding: 15px 30px;
-            border-radius: 8px;
-            transition: background-color 0.3s ease, transform 0.2s ease;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-
-        /* Hover Effects for Menu Links */
-        .menu a:hover {
-            background-color: #00509e;
-            transform: translateY(-3px);
-        }
-
-        /* Logout Button */
-        .logout-btn {
-            display: inline-block;
-            text-decoration: none;
-            font-size: 1.2rem;
-            color: #ffffff;
-            background-color: #d9534f;
-            padding: 15px 30px;
-            border-radius: 8px;
-            margin-top: 20px;
-            transition: background-color 0.3s ease, transform 0.2s ease;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-
-        /* Hover Effects for Logout Button */
-        .logout-btn:hover {
-            background-color: #c9302c;
-            transform: translateY(-3px);
-        }
-
-        /* Alerts Section */
-        .alerts-container {
-            margin-top: 30px;
-            background-color: #ffeb3b;
-            color: #333;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-        }
-
-        .alert {
-            background-color: #ffeb3b;
-            color: #333;
-            padding: 10px;
-            margin: 10px 0;
-            border-radius: 5px;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-        }
-
-        .create-alert-form {
-            margin-top: 20px;
-            background-color: #ffffff;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-            color: #333;
-        }
-
-        .create-alert-form textarea {
-            width: 100%;
-            padding: 10px;
-            font-size: 1rem;
-            margin-bottom: 10px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-        }
-
-        .create-alert-form button {
-            background-color: #001f3f;
-            color: #ffffff;
-            padding: 10px 20px;
-            border: none;
-            border-radius: 5px;
-            cursor: pointer;
-        }
-
-        .create-alert-form button:hover {
-            background-color: #003366;
-        }
-
-    </style>
-</head>
-<body>
-
-    <div class="dashboard">
-        <h1>Police Station Admin Dashboard</h1>
-        
-        <!-- Menu -->
-        <div class="menu">
-            <a href="manage_staff.php">Manage Staff</a>
-            <a href="manage_reports.php">Manage Reports</a>
-            <a href="assign_duties.php">Assign Duties</a>
-            <a href="view_duties.php">View Duties</a>
-            <a href="admin_leave_requests.php">Manage Leave Requests</a>
-        </div>
-
-        <!-- Alert Creation Form -->
-        <div class="create-alert-form">
-            <h2>Create New Alert</h2>
-            <?php if (isset($alert_success)) { echo "<p style='color: green;'>$alert_success</p>"; } ?>
-            <?php if (isset($alert_error)) { echo "<p style='color: red;'>$alert_error</p>"; } ?>
-            <form method="POST">
-                <textarea name="alert_message" placeholder="Enter alert message" required></textarea><br>
-                <button type="submit" name="create_alert">Create Alert</button>
-            </form>
-        </div>
-
-        <!-- Display Active Alerts -->
-        <div class="alerts-container">
-    <h2>Active Alerts</h2>
-    <?php 
-    $current_time = time(); // Get current timestamp
-
-    while ($alert = $alerts_result->fetch_assoc()) { 
-        $alert_time = strtotime($alert['created_at']); // Convert alert time to timestamp
-        $time_difference = $current_time - $alert_time; // Calculate time difference
-
-        if ($time_difference <= 86400) { // 86400 seconds = 24 hours
-    ?>
-            <div class="alert">
-                <p><strong>Alert:</strong> <?= htmlspecialchars($alert['message']); ?></p>
-                <p><small>Created at: <?= $alert['created_at']; ?></small></p>
-            </div>
-    <?php 
-        }
-    } 
-    ?>
+<div class="row g-3 mb-4">
+    <?php foreach ([
+        ['Station reports', $stats['reports'], 'fa-file-lines', 'manage_reports.php'],
+        ['Open cases', $stats['open'], 'fa-folder-open', 'manage_reports.php?status=Open'],
+        ['Active staff', $stats['staff'], 'fa-users', 'manage_staff.php'],
+        ['Pending leave', $stats['leave'], 'fa-calendar-check', 'admin_leave_requests.php'],
+        ['Duties today', $stats['duties'], 'fa-clipboard-list', 'view_duties.php'],
+        ['Emails to retry', $stats['failed'], 'fa-envelope-circle-check', 'view_duties.php?notify=failed'],
+    ] as [$label, $value, $icon, $href]): ?>
+    <div class="col-6 col-md-4 col-xl-2">
+        <a class="card stat-card text-decoration-none text-reset" href="<?= e(app_url($href)) ?>">
+            <div class="stat-icon"><i class="fa-solid <?= e($icon) ?>"></i></div>
+            <div><div class="stat-value"><?= (int) $value ?></div><div class="stat-label"><?= e($label) ?></div></div>
+        </a>
+    </div>
+    <?php endforeach; ?>
 </div>
 
-
-        <!-- Logout -->
-        <a href="index.php" class="logout-btn">Logout</a>
+<div class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3">Reports by status</h2>
+            <?php if (!$byStatus): ?><div class="empty-state py-3"><i class="fa-regular fa-chart-bar"></i><div>No reports yet.</div></div>
+            <?php else: ?><canvas id="chartStatus" height="200" role="img" aria-label="Reports by status"></canvas><?php endif; ?>
+        </div></div>
     </div>
-   
-</body>
-</html>
+    <div class="col-lg-4">
+        <div class="card h-100"><div class="card-body">
+            <h2 class="h6 text-uppercase text-muted mb-3">Reports by crime type</h2>
+            <?php if (!$byCrime): ?><div class="empty-state py-3"><i class="fa-regular fa-chart-bar"></i><div>No reports yet.</div></div>
+            <?php else: ?><canvas id="chartCrime" height="200" role="img" aria-label="Reports by crime type"></canvas><?php endif; ?>
+        </div></div>
+    </div>
+    <div class="col-lg-4"><?= alerts_panel_html() ?></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h6 text-uppercase text-muted mb-0">Upcoming duties</h2>
+                <a class="btn btn-sm btn-outline-primary" href="<?= e(app_url('assign_duties.php')) ?>">Assign duty</a>
+            </div>
+            <?php if (!$today): ?><div class="empty-state"><i class="fa-regular fa-calendar"></i><div>No upcoming duties.</div></div>
+            <?php else: ?>
+            <div class="table-wrap"><table class="table table-sm mb-0">
+                <thead><tr><th>Staff</th><th>Duty</th><th>Start</th></tr></thead>
+                <tbody><?php foreach ($today as $d): ?>
+                    <tr><td><?= e($d['name']) ?></td><td><a href="<?= e(app_url('edit_duty.php?id=' . (int) $d['id'])) ?>"><?= e(mb_strimwidth($d['duty_description'], 0, 40, '…')) ?></a></td><td><?= fmt_datetime($d['start_time']) ?></td></tr>
+                <?php endforeach; ?></tbody>
+            </table></div>
+            <?php endif; ?>
+        </div></div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card h-100"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h6 text-uppercase text-muted mb-0">Pending leave requests</h2>
+                <a class="btn btn-sm btn-outline-primary" href="<?= e(app_url('admin_leave_requests.php')) ?>">Review</a>
+            </div>
+            <?php if (!$pendingLeave): ?><div class="empty-state"><i class="fa-regular fa-calendar-check"></i><div>Nothing waiting for review.</div></div>
+            <?php else: ?>
+            <div class="table-wrap"><table class="table table-sm mb-0">
+                <thead><tr><th>Staff</th><th>Type</th><th>Dates</th><th>Days</th></tr></thead>
+                <tbody><?php foreach ($pendingLeave as $l): ?>
+                    <tr><td><?= e($l['name']) ?></td><td><?= e($l['type_name'] ?? '') ?></td><td><?= fmt_date($l['leave_start_date']) ?> – <?= fmt_date($l['leave_end_date']) ?></td><td><?= (int) $l['requested_days'] ?></td></tr>
+                <?php endforeach; ?></tbody>
+            </table></div>
+            <?php endif; ?>
+        </div></div>
+    </div>
+</div>
+<?php
+$pageScripts = '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var data = ' . json_for_script($chartData) . ';
+    var palette = ["#0b2545", "#c9a227", "#2a6f97", "#6c757d", "#198754", "#dc3545", "#fd7e14", "#6f42c1"];
+    var s = document.getElementById("chartStatus");
+    if (s && data.status.labels.length) new Chart(s, { type: "doughnut", data: { labels: data.status.labels, datasets: [{ data: data.status.values, backgroundColor: palette }] }, options: { plugins: { legend: { position: "bottom" } } } });
+    var c = document.getElementById("chartCrime");
+    if (c && data.crime.labels.length) new Chart(c, { type: "bar", data: { labels: data.crime.labels, datasets: [{ data: data.crime.values, backgroundColor: palette[0] }] }, options: { indexAxis: "y", plugins: { legend: { display: false } }, scales: { x: { ticks: { precision: 0 }, beginAtZero: true } } } });
+})();
+</script>';
+require PMS_ROOT . '/includes/layout_bottom.php';

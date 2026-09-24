@@ -1,223 +1,80 @@
 <?php
-// Include your database connection file
-include('config.php');
+/** Report analysis: role-scoped counts and charts by month, status, crime type, district, station. */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/reports.php';
+$me = require_role([ROLE_ADMIN, ROLE_STATION]);
 
-// Fetch distinct districts from the reports table
-$districtQuery = "SELECT DISTINCT district FROM reports";
-$districtResult = mysqli_query($conn, $districtQuery);
+$from = get_str('from', 10);
+$to   = get_str('to', 10);
+if ($from === '' || !valid_date($from)) {
+    $from = date('Y-m-d', strtotime('-11 months', strtotime(date('Y-m-01'))));
+}
+if ($to === '' || !valid_date($to)) {
+    $to = date('Y-m-d');
+}
+[$scopeSql, $scopeTypes, $scopeParams] = station_scope('r.police_station_id');
+$w = "$scopeSql AND r.status <> 'Archived' AND COALESCE(r.report_date, DATE(r.created_at)) BETWEEN ? AND ?";
+$types = $scopeTypes . 'ss';
+$params = array_merge($scopeParams, [$from, $to]);
 
-// Fetch distinct complainants from the reports table for the filter
-$complainantQuery = "SELECT DISTINCT complainant FROM reports";
-$complainantResult = mysqli_query($conn, $complainantQuery);
+$total    = (int) db_value("SELECT COUNT(*) FROM reports r WHERE $w", $types, $params);
+$byMonth  = db_all("SELECT DATE_FORMAT(COALESCE(r.report_date, r.created_at), '%Y-%m') ym, COUNT(*) c FROM reports r WHERE $w GROUP BY ym ORDER BY ym", $types, $params);
+$byStatus = db_all("SELECT r.status k, COUNT(*) c FROM reports r WHERE $w GROUP BY k ORDER BY c DESC", $types, $params);
+$byCrime  = db_all("SELECT COALESCE(NULLIF(r.crime_type, ''), 'Unclassified') k, COUNT(*) c FROM reports r WHERE $w GROUP BY k ORDER BY c DESC LIMIT 12", $types, $params);
+$byDist   = db_all("SELECT COALESCE(d.name, NULLIF(r.district, ''), 'Unknown') k, COUNT(*) c FROM reports r LEFT JOIN districts d ON d.id = r.district_id WHERE $w GROUP BY k ORDER BY c DESC LIMIT 12", $types, $params);
+$byStation = is_admin() ? db_all("SELECT COALESCE(ps.police_station_name, r.police_station_name) k, COUNT(*) c FROM reports r LEFT JOIN police_stations ps ON ps.id = r.police_station_id WHERE $w GROUP BY k ORDER BY c DESC LIMIT 12", $types, $params) : [];
+$byTehsil = db_all("SELECT COALESCE(t.name, NULLIF(r.tehsil, ''), 'Unknown') k, COUNT(*) c FROM reports r LEFT JOIN tehsils t ON t.id = r.tehsil_id WHERE $w GROUP BY k ORDER BY c DESC LIMIT 12", $types, $params);
 
-// Fetch distinct tehsils from the reports table for the filter
-$tehsilQuery = "SELECT DISTINCT tehsil FROM reports";
-$tehsilResult = mysqli_query($conn, $tehsilQuery);
+if (get_str('export') === 'csv') {
+    audit_log('analysis.export', 'report', null, ['from' => $from, 'to' => $to]);
+    $rows = [];
+    foreach ([['Month', $byMonth, 'ym'], ['Status', $byStatus, 'k'], ['Crime type', $byCrime, 'k'], ['District', $byDist, 'k'], ['Tehsil', $byTehsil, 'k'], ['Station', $byStation, 'k']] as [$dim, $set, $key]) {
+        foreach ($set as $s) {
+            $rows[] = [$dim, $s[$key], $s['c']];
+        }
+    }
+    csv_download('report_analysis.csv', ['Dimension', 'Value', 'Reports'], $rows);
+}
+$series = fn(array $set, string $key = 'k') => ['labels' => array_column($set, $key), 'values' => array_map('intval', array_column($set, 'c'))];
+$chartData = ['months' => $series($byMonth, 'ym'), 'status' => $series($byStatus), 'crime' => $series($byCrime), 'district' => $series($byDist), 'station' => $series($byStation), 'tehsil' => $series($byTehsil)];
+
+$pageTitle = 'Report Analysis';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Report Analysis</title>
-    <style>
-        body {
-            font-family: 'Arial', sans-serif;
-            background-color: #f4f4f9;
-            margin: 0;
-            padding: 0;
-            color: #333;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
-        .container {
-            background-color: #ffffff;
-            padding: 40px;
-            border-radius: 10px;
-            box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
-            text-align: center;
-            width: 90%;
-            max-width: 800px;
-        }
-        h2 {
-            color: #001f3f;
-            font-size: 28px;
-            margin-bottom: 30px;
-            font-weight: bold;
-        }
-        .filter-form {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-        .filter-form select, .filter-form button, .filter-form input {
-            padding: 10px;
-            font-size: 16px;
-            margin: 10px 0;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-            width: 100%;
-        }
-        .filter-form button {
-            background-color: #007bff;
-            color: white;
-            cursor: pointer;
-        }
-        .filter-form button:hover {
-            background-color: #0056b3;
-        }
-        .footer {
-            margin-top: 30px;
-            font-size: 14px;
-            color: #777;
-        }
-        table {
-            width: 100%;
-            margin-top: 20px;
-            border-collapse: collapse;
-        }
-        th, td {
-            padding: 10px;
-            border: 1px solid #ddd;
-        }
-        th {
-            background-color: #007bff;
-            color: white;
-        }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <!-- Sticky heading and Back button -->
-<div style="margin-top:10px ; top: 4;  padding: 20px; z-index: 10; box-shadow: 0 2px 5px rgba(0,0,0,0.1);">
-    <h2 style="margin: 0; font-size: 28px; color: #001f3f;">Report Analysis</h2>
-    <a href="javascript:history.back()" style="display: inline-block; margin-top: 10px; color: #007bff; font-size: 16px; text-decoration: none;">&#8592; Back</a>
+<div class="card mb-3"><div class="card-body">
+    <form method="get" class="row g-2 align-items-end">
+        <div class="col-md-3"><label for="from" class="form-label">From</label><input type="date" class="form-control" id="from" name="from" value="<?= e($from) ?>"></div>
+        <div class="col-md-3"><label for="to" class="form-label">To</label><input type="date" class="form-control" id="to" name="to" value="<?= e($to) ?>"></div>
+        <div class="col-md-3 d-flex gap-2"><button class="btn btn-navy">Apply</button><a class="btn btn-outline-secondary" href="<?= e(app_url('report_analysis.php')) ?>">Reset</a></div>
+        <div class="col-md-3 text-md-end small"><a href="<?= e(query_link(['export' => 'csv'])) ?>"><i class="fa-solid fa-file-csv"></i> Export CSV</a></div>
+    </form>
+</div></div>
+<p class="text-muted"><strong><?= $total ?></strong> non-archived report(s) between <?= fmt_date($from) ?> and <?= fmt_date($to) ?><?= is_station_admin() ? ' for ' . e($me['station_name'] ?? 'your station') : '' ?>.</p>
+<?php if ($total === 0): ?>
+    <div class="card"><div class="card-body empty-state"><i class="fa-regular fa-chart-bar"></i><div>No reports in this period.</div></div></div>
+<?php else: ?>
+<div class="row g-4">
+    <div class="col-12"><div class="card"><div class="card-body"><h2 class="h6 text-uppercase text-muted mb-3">Reports per month</h2><canvas id="chartMonths" height="90" role="img" aria-label="Reports per month"></canvas></div></div></div>
+    <?php foreach ([['chartStatus', 'By status', 'doughnut'], ['chartCrime', 'By crime type', 'bar'], ['chartDistrict', 'By district', 'bar'], ['chartTehsil', 'By tehsil', 'bar']] as [$id, $title]): ?>
+    <div class="col-md-6"><div class="card h-100"><div class="card-body"><h2 class="h6 text-uppercase text-muted mb-3"><?= e($title) ?></h2><canvas id="<?= $id ?>" height="220" role="img" aria-label="<?= e($title) ?>"></canvas></div></div></div>
+    <?php endforeach; ?>
+    <?php if (is_admin()): ?><div class="col-md-6"><div class="card h-100"><div class="card-body"><h2 class="h6 text-uppercase text-muted mb-3">By police station</h2><canvas id="chartStation" height="220" role="img" aria-label="By police station"></canvas></div></div></div><?php endif; ?>
 </div>
-
-
-        <!-- Filter form -->
-        <div class="filter-form">
-            <form method="POST">
-                <!-- Month and Year filter -->
-                <input type="month" name="month_year">
-
-                <!-- Complainant filter -->
-                <select name="complainant">
-                    <option value="">Select Complainant</option>
-                    <?php
-                    while ($complainantRow = mysqli_fetch_assoc($complainantResult)) {
-                        echo "<option value='" . htmlspecialchars($complainantRow['complainant']) . "'>" . htmlspecialchars($complainantRow['complainant']) . "</option>";
-                    }
-                    ?>
-                </select>
-
-                <!-- District filter -->
-                <select name="district">
-                    <option value="">Select District</option>
-                    <?php
-                    while ($districtRow = mysqli_fetch_assoc($districtResult)) {
-                        echo "<option value='" . htmlspecialchars($districtRow['district']) . "'>" . htmlspecialchars($districtRow['district']) . "</option>";
-                    }
-                    ?>
-                </select>
-
-                <!-- Tehsil filter -->
-                <select name="tehsil">
-                    <option value="">Select Tehsil</option>
-                    <?php
-                    while ($tehsilRow = mysqli_fetch_assoc($tehsilResult)) {
-                        echo "<option value='" . htmlspecialchars($tehsilRow['tehsil']) . "'>" . htmlspecialchars($tehsilRow['tehsil']) . "</option>";
-                    }
-                    ?>
-                </select>
-
-                <!-- Search Button -->
-                <button type="submit" name="search_reports">Search Reports</button>
-            </form>
-        </div>
-
-        <?php
-        if (isset($_POST['search_reports'])) {
-            // Get selected month, complainant, district, and tehsil, check if they're set before accessing them
-            $month_year = isset($_POST['month_year']) ? mysqli_real_escape_string($conn, $_POST['month_year']) : '';
-            $complainant = isset($_POST['complainant']) ? mysqli_real_escape_string($conn, $_POST['complainant']) : '';
-            $district = isset($_POST['district']) ? mysqli_real_escape_string($conn, $_POST['district']) : '';
-            $tehsil = isset($_POST['tehsil']) ? mysqli_real_escape_string($conn, $_POST['tehsil']) : '';
-
-            // Start building the query with no filters initially
-            $query = "SELECT * FROM reports WHERE 1";
-
-            // If a month is selected, filter by the month
-            if (!empty($month_year)) {
-                $year = substr($month_year, 0, 4);
-                $month = substr($month_year, 5, 2);
-                $query .= " AND YEAR(report_date) = '$year' AND MONTH(report_date) = '$month'";
-            }
-
-            // Add complainant filter if selected
-            if (!empty($complainant)) {
-                $query .= " AND complainant = '$complainant'";
-            }
-
-            // Add district filter if selected
-            if (!empty($district)) {
-                $query .= " AND district = '$district'";
-            }
-
-            // Add tehsil filter if selected
-            if (!empty($tehsil)) {
-                $query .= " AND tehsil = '$tehsil'";
-            }
-
-            // Fetch results from the database
-            $result = mysqli_query($conn, $query);
-
-            // Display results
-            if (mysqli_num_rows($result) > 0) {
-                echo "<table>
-                        <tr>
-                            <th>Police Station</th>
-                            <th>Accused Name</th>
-                            <th>Complainant</th>
-                            <th>District</th>
-                            <th>Tehsil</th>
-                            <th>Report Date</th>
-                            <th>Description</th>
-                            <th>Status</th>
-                        </tr>";
-
-                while ($row = mysqli_fetch_assoc($result)) {
-                    echo "<tr>
-                            <td>" . htmlspecialchars($row['police_station_name']) . "</td>
-                            <td>" . htmlspecialchars($row['accused_name']) . "</td>
-                            <td>" . htmlspecialchars($row['complainant']) . "</td>
-                            <td>" . htmlspecialchars($row['district']) . "</td>
-                            <td>" . htmlspecialchars($row['tehsil']) . "</td>
-                            <td>" . htmlspecialchars($row['report_date']) . "</td>
-                            <td>" . htmlspecialchars($row['report_description']) . "</td>
-                            <td>" . htmlspecialchars($row['status']) . "</td>
-                          </tr>";
-                }
-
-                echo "</table>";
-            } else {
-                echo "<p>No reports found for the selected filters.</p>";
-            }
-        }
-        ?>
-
-        <!-- Footer section -->
-        <div class="footer">
-        <a href="http://localhost/pms/dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
-    &#8592; Home
-</a>
-            <p>&copy; 2025 Report Analysis System</p>
-        </div>
-    </div>
-
-</body>
-</html>
+<?php endif; ?>
+<?php
+$pageScripts = '<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+(function () {
+    var data = ' . json_for_script($chartData) . ';
+    var palette = ["#0b2545", "#c9a227", "#2a6f97", "#6c757d", "#198754", "#dc3545", "#fd7e14", "#6f42c1", "#20c997", "#0dcaf0", "#adb5bd", "#e83e8c"];
+    function bar(id, d, horizontal) { var el = document.getElementById(id); if (!el || !d.labels.length) return;
+        new Chart(el, { type: "bar", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: palette[0] }] },
+            options: { indexAxis: horizontal ? "y" : "x", plugins: { legend: { display: false } }, scales: { x: { ticks: { precision: 0 }, beginAtZero: true }, y: { ticks: { precision: 0 }, beginAtZero: true } } } }); }
+    function doughnut(id, d) { var el = document.getElementById(id); if (!el || !d.labels.length) return;
+        new Chart(el, { type: "doughnut", data: { labels: d.labels, datasets: [{ data: d.values, backgroundColor: palette }] }, options: { plugins: { legend: { position: "bottom" } } } }); }
+    bar("chartMonths", data.months, false); doughnut("chartStatus", data.status); bar("chartCrime", data.crime, true);
+    bar("chartDistrict", data.district, true); bar("chartTehsil", data.tehsil, true); bar("chartStation", data.station, true);
+})();
+</script>';
+require PMS_ROOT . '/includes/layout_bottom.php';

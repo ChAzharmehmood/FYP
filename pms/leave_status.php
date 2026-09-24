@@ -1,143 +1,49 @@
 <?php
-session_start(); // Start the session
+/** Staff: my leave requests, with withdrawal of pending ones. */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/leave.php';
+$me = require_login();
+$id = (int) $me['id'];
 
-include('config.php'); // Include the database configuration file
-
-// Ensure the database connection is established
-if (!$conn) {
-    die("Database connection failed: " . mysqli_connect_error());
-}
-
-// Check if the user is logged in
-if (!isset($_SESSION['staff_id'])) {
-    die("Error: Staff member information is not set. Please log in again.");
-}
-
-// Fetch the staff ID from the session (stored during login)
-$staffId = $_SESSION['staff_id'];
-
-// Function to fetch leave requests for the logged-in staff
-function fetchLeaveRequests($staffId)
-{
-    global $conn; // Use the global $conn variable for database connection
-
-    // Query to fetch leave requests based on the staff ID
-    $query = "SELECT * FROM leave_requests WHERE staff_id = ?";  // Ensure column name matches
-    $stmt = $conn->prepare($query); // Use prepared statements to prevent SQL injection
-    if (!$stmt) {
-        die("Database query preparation failed: " . $conn->error);
+if (is_post()) {
+    csrf_verify();
+    $lr = leave_find(post_int('id', 0) ?? 0);
+    if (!$lr || (int) $lr['staff_id'] !== $id) {
+        not_found('Leave request not found.');
     }
-
-    $stmt->bind_param("i", $staffId); // Bind the staff ID parameter
-    $stmt->execute();
-    $result = $stmt->get_result();
-    $stmt->close(); // Close the statement
-    return $result;
+    $err = leave_withdraw($lr);
+    flash($err ? 'danger' : 'success', $err ?? 'Request withdrawn.');
+    redirect('leave_status.php');
 }
-
-// Fetch leave requests for the staff
-$leaveRequests = fetchLeaveRequests($staffId);
-
+$total = (int) db_value('SELECT COUNT(*) FROM leave_requests WHERE staff_id = ?', 'i', [$id]);
+$pg = paginate($total, 20);
+$rows = db_all('SELECT lr.*, lt.name AS type_name, rv.name AS reviewed_by_name FROM leave_requests lr LEFT JOIN leave_types lt ON lt.id = lr.leave_type_id LEFT JOIN staff rv ON rv.id = lr.reviewed_by
+                WHERE lr.staff_id = ? ORDER BY lr.id DESC LIMIT ? OFFSET ?', 'iii', [$id, $pg['per_page'], $pg['offset']]);
+$pageTitle = 'My Leave Requests';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Leave Status - Staff Management</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            background-color: #ecf0f1;
-            color: #2c3e50;
-        }
-        .dashboard-container {
-            padding: 20px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
-        }
-        table, th, td {
-            border: 1px solid #bdc3c7;
-        }
-        th, td {
-            padding: 10px;
-            text-align: left;
-        }
-        th {
-            background-color: #2c3e50;
-            color: white;
-        }
-        tr:nth-child(even) {
-            background-color: #f2f2f2;
-        }
-        .error-message {
-            color: red;
-            font-weight: bold;
-        }
-        .home-button {
-            background-color: #001f3d; /* Navy blue */
-            color: white;
-            padding: 10px 20px;
-            text-decoration: none;
-            border-radius: 5px;
-            font-size: 16px;
-            cursor: pointer;
-            display: inline-block;
-            margin-bottom: 20px;
-        }
-        .home-button:hover {
-            background-color: #0056b3; /* Darker shade of blue for hover effect */
-        }
-    </style>
-</head>
-<body>
-    <div class="dashboard-container">
-        <a href="staff_dashboard.php" class="home-button">Home</a> <!-- Home Button -->
-        <h2>Leave Status</h2>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Leave ID</th>
-                    <th>Leave Type</th>
-                    <th>Start Date</th>
-                    <th>End Date</th>
-                    <th>Status</th>
-                    <th>Reason</th>
-                    <th>Approved Days</th>
-                    <th>Created At</th>
-                    <th>Updated At</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php
-                if ($leaveRequests && $leaveRequests->num_rows > 0) {
-                    // Display each leave request in a table row
-                    while ($row = $leaveRequests->fetch_assoc()) {
-                        echo "<tr>
-                                <td>" . htmlspecialchars($row['id']) . "</td>
-                                <td>" . htmlspecialchars($row['leave_type']) . "</td>
-                                <td>" . htmlspecialchars($row['leave_start_date']) . "</td>
-                                <td>" . htmlspecialchars($row['leave_end_date']) . "</td>
-                                <td>" . htmlspecialchars($row['status']) . "</td>
-                                <td>" . htmlspecialchars($row['reason']) . "</td>
-                                <td>" . htmlspecialchars($row['approved_days']) . "</td>
-                                <td>" . htmlspecialchars($row['created_at']) . "</td>
-                                <td>" . htmlspecialchars($row['updated_at']) . "</td>
-                            </tr>";
-                    }
-                } else {
-                    // If no leave requests are found
-                    echo "<tr><td colspan='9' class='error-message'>No leave requests found for you.</td></tr>";
-                }
-                ?>
-            </tbody>
-        </table>
-    </div>
-</body>
-</html>
+<div class="card"><div class="card-body">
+    <div class="d-flex justify-content-between align-items-center mb-2"><a class="btn btn-sm btn-navy" href="<?= e(app_url('leave_request.php')) ?>"><i class="fa-solid fa-calendar-plus"></i> New request</a><?= pagination_html($pg) ?></div>
+    <?php if (!$rows): ?><div class="empty-state"><i class="fa-regular fa-calendar-check"></i><div>You have not requested any leave yet.</div></div>
+    <?php else: ?>
+    <div class="table-wrap"><table class="table table-hover align-middle">
+        <thead><tr><th>#</th><th>Type</th><th>From</th><th>To</th><th class="text-end">Requested</th><th class="text-end">Approved</th><th>Status</th><th>Reviewed</th><th>Submitted</th><th></th></tr></thead>
+        <tbody><?php foreach ($rows as $r): ?>
+            <tr>
+                <td><?= (int) $r['id'] ?></td><td><?= e($r['type_name'] ?? $r['leave_type']) ?></td><td><?= fmt_date($r['leave_start_date']) ?></td><td><?= fmt_date($r['leave_end_date']) ?></td>
+                <td class="text-end"><?= (int) $r['requested_days'] ?></td><td class="text-end"><?= $r['status'] === 'approved' ? (int) $r['approved_days'] : '—' ?></td>
+                <td><?= status_badge($r['status']) ?></td>
+                <td class="small"><?= $r['reviewed_by_name'] ? e($r['reviewed_by_name']) . '<br>' . fmt_datetime($r['reviewed_at']) : '—' ?><?= $r['review_reason'] ? '<br><em>' . e($r['review_reason']) . '</em>' : '' ?></td>
+                <td class="small"><?= fmt_datetime($r['created_at']) ?></td>
+                <td class="text-end">
+                    <?php if ($r['status'] === 'pending' && strtotime($r['leave_start_date']) >= strtotime(date('Y-m-d'))): ?>
+                    <form method="post" data-confirm="Withdraw this request?"><?= csrf_field() ?><input type="hidden" name="id" value="<?= (int) $r['id'] ?>"><button class="btn btn-sm btn-outline-secondary">Withdraw</button></form>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?></tbody>
+    </table></div>
+    <?php endif; ?>
+</div></div>
+<?php require PMS_ROOT . '/includes/layout_bottom.php'; ?>

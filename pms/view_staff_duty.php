@@ -1,167 +1,47 @@
 <?php
-// Start session to track logged-in user
-session_start();
+/** My duties (staff): list and calendar, read-only. */
+declare(strict_types=1);
+require_once __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/duties.php';
+require_once __DIR__ . '/includes/duty_calendar.php';
+$me = require_login();
+$id = (int) $me['id'];
+$view = get_str('view', 10) === 'calendar' ? 'calendar' : 'list';
+$show = get_str('show', 10) ?: 'upcoming';
+[$calY, $calM] = calendar_month_param();
 
-// Database connection
-$host = "localhost"; // Replace with your host
-$dbname = "db_pms"; // Replace with your database name
-$username = "root"; // Replace with your username
-$password = ""; // Replace with your password
-
-$conn = new mysqli($host, $username, $password, $dbname);
-
-// Check connection
-if ($conn->connect_error) {
-    die("Database Connection Failed: " . $conn->connect_error);
+if ($view === 'calendar') {
+    $rows = db_all('SELECT * FROM duties WHERE staff_id = ? AND start_time < ? AND end_time >= ? ORDER BY start_time', 'iss',
+        [$id, date('Y-m-d', mktime(0, 0, 0, $calM + 1, 1, $calY)), date('Y-m-d', mktime(0, 0, 0, $calM, 1, $calY))]);
+    $pg = null;
+} else {
+    $w = $show === 'all' ? '1=1' : ($show === 'past' ? 'end_time < NOW()' : 'end_time >= NOW() AND status = "scheduled"');
+    $total = (int) db_value("SELECT COUNT(*) FROM duties WHERE staff_id = ? AND $w", 'i', [$id]);
+    $pg = paginate($total, 20);
+    $rows = db_all("SELECT * FROM duties WHERE staff_id = ? AND $w ORDER BY start_time " . ($show === 'past' ? 'DESC' : 'ASC') . ' LIMIT ? OFFSET ?', 'iii', [$id, $pg['per_page'], $pg['offset']]);
 }
-
-// Get staff_id from session
-if (!isset($_SESSION['staff_id'])) {
-    die("<p class='error'>Error: Staff not logged in. Please log in again.</p>");
-}
-
-$staff_id = $_SESSION['staff_id']; // Retrieve the staff ID from session
+$pageTitle = 'My Duties';
+require PMS_ROOT . '/includes/layout_top.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Staff Duty Details</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            color: #333;
-            margin: 0;
-            padding: 0;
-        }
-        .container {
-            max-width: 800px;
-            margin: 50px auto;
-            background-color: #fff;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            overflow: hidden;
-        }
-        .header {
-            background-color: #001f3f; /* Navy Blue */
-            color: #fff;
-            padding: 20px;
-            text-align: center;
-            position: relative;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
-        .home-button {
-            position: absolute;
-            top: 50%;
-            left: 20px;
-            transform: translateY(-50%);
-            background-color: #001f3f; /* Navy Blue */
-            color: #fff;
-            padding: 10px 15px;
-            text-decoration: none;
-            border: none;
-            border-radius: 5px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        .home-button:hover {
-            background-color: #004080; /* Slightly lighter navy blue */
-        }
-        .content {
-            padding: 20px;
-        }
-        .duty-card {
-            margin-bottom: 20px;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #f9f9f9;
-        }
-        .duty-card p {
-            margin: 5px 0;
-        }
-        .duty-card strong {
-            color: #001f3f; /* Navy Blue */
-        }
-        .error {
-            color: red;
-            font-weight: bold;
-        }
-        .no-duties {
-            text-align: center;
-            font-weight: bold;
-            color: #555;
-        }
-        hr {
-            border: none;
-            border-top: 1px solid #ddd;
-            margin: 20px 0;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <a href="staff_dashboard.php" class="home-button">Home</a>
-            <h1>Staff Duty Details</h1>
-        </div>
-        <div class="content">
-            <?php
-            if ($staff_id > 0) {
-                // Query to fetch duties for the specified staff member
-                $sql = "SELECT 
-                            duty_description, 
-                            start_time, 
-                            end_time, 
-                            police_station_name, 
-                            shift_type, 
-                            Duty_location, 
-                            checkpoint_id, 
-                            assigned_date 
-                        FROM duties 
-                        WHERE staff_id = ?";
-                
-                $stmt = $conn->prepare($sql);
-                if ($stmt) {
-                    $stmt->bind_param("i", $staff_id);
-                    $stmt->execute();
-                    $result = $stmt->get_result();
-
-                    if ($result->num_rows > 0) {
-                        while ($row = $result->fetch_assoc()) {
-                            echo "<div class='duty-card'>";
-                            echo "<p><strong>Description:</strong> " . htmlspecialchars($row['duty_description']) . "</p>";
-                            echo "<p><strong>Start Time:</strong> " . $row['start_time'] . "</p>";
-                            echo "<p><strong>End Time:</strong> " . $row['end_time'] . "</p>";
-                            echo "<p><strong>Police Station:</strong> " . htmlspecialchars($row['police_station_name']) . "</p>";
-                            echo "<p><strong>Shift Type:</strong> " . $row['shift_type'] . "</p>";
-                            echo "<p><strong>Duty_Location:</strong> " . $row['Duty_Location'] . "</p>";
-                            if ($row['Duty_Location'] == 'checkpoint') {
-                                echo "<p><strong>Checkpoint ID:</strong> " . $row['checkpoint_id'] . "</p>";
-                            }
-                            echo "<p><strong>Assigned Date:</strong> " . $row['assigned_date'] . "</p>";
-                            echo "</div>";
-                        }
-                    } else {
-                        echo "<p class='no-duties'>No duties found for the specified staff member.</p>";
-                    }
-                } else {
-                    echo "<p class='error'>Failed to prepare the SQL statement. Error: " . $conn->error . "</p>";
-                }
-
-                $stmt->close();
-            } else {
-                echo "<p class='error'>Invalid staff ID.</p>";
-            }
-
-            $conn->close();
-            ?>
-        </div>
-    </div>
-</body>
-</html>
+<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+    <div class="btn-group btn-group-sm"><a class="btn btn-outline-secondary<?= $view === 'list' ? ' active' : '' ?>" href="?view=list">List</a><a class="btn btn-outline-secondary<?= $view === 'calendar' ? ' active' : '' ?>" href="?view=calendar">Calendar</a></div>
+    <?php if ($view === 'list'): ?>
+    <div class="btn-group btn-group-sm"><?php foreach (['upcoming' => 'Upcoming', 'past' => 'Past', 'all' => 'All'] as $k => $v): ?><a class="btn btn-outline-secondary<?= $show === $k ? ' active' : '' ?>" href="?view=list&show=<?= $k ?>"><?= $v ?></a><?php endforeach; ?></div>
+    <?php endif; ?>
+</div>
+<div class="card"><div class="card-body">
+<?php if ($view === 'calendar'): ?>
+    <?= duty_calendar_html($rows, $calY, $calM, null) ?>
+<?php elseif (!$rows): ?>
+    <div class="empty-state"><i class="fa-regular fa-calendar"></i><div>No <?= e($show === 'all' ? '' : $show) ?> duties.</div></div>
+<?php else: ?>
+    <div class="table-wrap"><table class="table table-hover align-middle">
+        <thead><tr><th>Duty</th><th>Start</th><th>End</th><th>Shift</th><th>Location</th><th>Station</th><th>Status</th></tr></thead>
+        <tbody><?php foreach ($rows as $r): ?>
+            <tr><td class="fw-semibold"><?= e($r['duty_description']) ?></td><td class="text-nowrap"><?= fmt_datetime($r['start_time']) ?></td><td class="text-nowrap"><?= fmt_datetime($r['end_time']) ?></td><td><?= e(ucfirst((string) $r['shift_type'])) ?></td><td><?= e($r['Duty_location']) ?><?= $r['checkpoint_id'] ? ' (CP ' . (int) $r['checkpoint_id'] . ')' : '' ?></td><td class="small"><?= e($r['police_station_name']) ?></td><td><?= duty_status_badge($r) ?></td></tr>
+        <?php endforeach; ?></tbody>
+    </table></div>
+    <div class="d-flex justify-content-end"><?= pagination_html($pg) ?></div>
+<?php endif; ?>
+</div></div>
+<?php require PMS_ROOT . '/includes/layout_bottom.php'; ?>
