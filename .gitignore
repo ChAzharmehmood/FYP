@@ -1,2 +1,6 @@
 # Local secrets
 pms/mail_config.php
+
+.env
+.env.*
+.vercel/

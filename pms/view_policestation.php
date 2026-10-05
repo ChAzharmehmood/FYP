@@ -1,16 +1,5 @@
 <?php
-// Database connection
-$host = 'localhost'; // Change as per your setup
-$db = 'db_pms'; // Replace with your database name
-$user = 'root'; // Replace with your DB user
-$pass = ''; // Replace with your DB password
-
-$conn = new mysqli($host, $user, $pass, $db);
-
-// Check connection
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
+require_once __DIR__ . '/config.php';
 
 // Fetch all districts for the dropdown
 $districts_result = $conn->query("SELECT DISTINCT district FROM police_stations");
@@ -182,11 +171,11 @@ function goBack() {
     if (document.referrer) {
         window.location.href = document.referrer; // Go to the previous page
     } else {
-        window.location.href = "http://localhost/ams1/ams1"; // Fallback URL
+        window.location.href = "dashboard.php"; // Fallback URL
     }
 }
 </script>
-<a href="http://localhost/pms/dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
+<a href="dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
     &#8592; Home
 </a>
     </form>
@@ -224,5 +213,5 @@ function goBack() {
 </html>
 
 <?php
-$conn->close();
+// Connection closes at request end, after the shared session is saved.
 ?>

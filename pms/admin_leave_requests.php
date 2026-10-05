@@ -1,11 +1,5 @@
 <?php
-// Database connection
-$conn = new mysqli('localhost', 'root', '', 'db_pms');
-
-// Check connection
-if ($conn->connect_error) {
-    die("Connection failed: " . $conn->connect_error);
-}
+require_once __DIR__ . '/config.php';
 
 // Start session
 session_start();

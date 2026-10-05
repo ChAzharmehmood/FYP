@@ -2,7 +2,7 @@
 session_start(); // Start the session
 
 require 'vendor/autoload.php'; // Include PHPMailer
-require __DIR__ . '/mail_config.php';
+require __DIR__ . '/mail_env.php';
 include('config.php'); // Include database connection
 
 use PHPMailer\PHPMailer\PHPMailer;
@@ -28,7 +28,7 @@ function sendEmail($recipientEmail, $duty_description, $start_time, $end_time, $
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_SMTPS;
         $mail->Port = 465;
 
-        $mail->setFrom('shakelahmed765@gmail.com', 'Admin');
+        $mail->setFrom(SMTP_DUTIES_USER, 'Admin');
         $mail->addAddress($recipientEmail);
 
         $mail->isHTML(true);

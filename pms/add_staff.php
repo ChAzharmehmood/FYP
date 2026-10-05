@@ -61,7 +61,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 }
 
 // Close the database connection
-mysqli_close($conn);
+// Connection closes at request end, after the shared session is saved.
 ?>
 
 <!DOCTYPE html>
@@ -219,7 +219,7 @@ mysqli_close($conn);
 
             <button type="submit">Add Staff</button>
             <space></space>
-            <a href="http://localhost/pms/dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
+            <a href="dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
     &#8592; Home
 </a>
 

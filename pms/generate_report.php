@@ -58,7 +58,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generate_report'])) {
     }
 
     // Close database connection
-    mysqli_close($conn);
+    // Connection closes at request end, after the shared session is saved.
 }
 ?>
 
@@ -207,7 +207,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generate_report'])) {
     }
 
     // Close the database connection
-    mysqli_close($conn);
+    // Connection closes at request end, after the shared session is saved.
     ?>
 
     <form method="POST" action="">
@@ -293,7 +293,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST' && isset($_POST['generate_report'])) {
         <input type="text" name="id_card_no" placeholder="Enter ID Card Number" required><br>
 
         <button type="submit" name="generate_report">Generate Report</button>
-        <a href="http://localhost/pms/staff_dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
+        <a href="staff_dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
             &#8592; Home
         </a>
     </form>

@@ -212,7 +212,7 @@ $tehsilResult = mysqli_query($conn, $tehsilQuery);
 
         <!-- Footer section -->
         <div class="footer">
-        <a href="http://localhost/pms/dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
+        <a href="dashboard.php" class="btn btn-home btn-block" style="background-color: #001f3f; color: white; padding: 10px 15px; text-align: center; text-decoration: none; display: inline-block; border-radius: 5px;">
     &#8592; Home
 </a>
             <p>&copy; 2025 Report Analysis System</p>
