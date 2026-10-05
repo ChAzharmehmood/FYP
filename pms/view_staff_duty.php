@@ -2,18 +2,7 @@
 // Start session to track logged-in user
 session_start();
 
-// Database connection
-$host = "localhost"; // Replace with your host
-$dbname = "db_pms"; // Replace with your database name
-$username = "root"; // Replace with your username
-$password = ""; // Replace with your password
-
-$conn = new mysqli($host, $username, $password, $dbname);
-
-// Check connection
-if ($conn->connect_error) {
-    die("Database Connection Failed: " . $conn->connect_error);
-}
+require_once __DIR__ . '/config.php';
 
 // Get staff_id from session
 if (!isset($_SESSION['staff_id'])) {
@@ -159,7 +148,7 @@ $staff_id = $_SESSION['staff_id']; // Retrieve the staff ID from session
                 echo "<p class='error'>Invalid staff ID.</p>";
             }
 
-            $conn->close();
+            // Connection closes at request end, after the shared session is saved.
             ?>
         </div>
     </div>
